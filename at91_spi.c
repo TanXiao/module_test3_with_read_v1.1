@@ -34,30 +34,6 @@ DECLARE_COMPLETION(transfer_complete);
 /* SPI controller device */
 static AT91PS_SPI controller = (AT91PS_SPI) AT91C_VA_BASE_SPI;
 
-
-/******************************************************************************/
-
-/******************************************************************************/
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* ......................................................................... */
 
 /*
@@ -251,6 +227,19 @@ static irqreturn_t spi_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 
 /* ......................................................................... */
 
+/******************************************************************************/
+/*
+ * Handle interrupt from MISO
+ **/
+static irqreturn_t miso_interrupt(int irq, void *dev_id, struct pt_regs *regs){
+	printk(KERN_INFO "[DEBUG INFO] : SPI Interrupt for MISO is detected.\n");
+	return IRQ_HANDLED;
+}
+
+/******************************************************************************/
+
+
+
 /*
  * Initialize the SPI controller
  */
@@ -284,17 +273,18 @@ static int __init at91_spi_init(void)
 	}
 	controller->SPI_CR = AT91C_SPI_SPIEN;		/* Enable SPI */
 /******************************************************************************/
-	if(request_irq(AT91_ID_PIOB, at91_interrupt_PIOB, 0, "at91Rm9200 interrupt PIOB", NULL))
+	AT91_SYS->PIOA_PDR = AT91C_PIO_PA23;		//disable PA23 IO mode
+    AT91_SYS->PIOA_BSR = AT91C_PIO_PA23;		//set peripheral B function, irq3
+
+    AT91_SYS->PMC_PCER  = 1<<AT91C_ID_IRQ3;		//enable irq3 clock
+    AT91_SYS->AIC_SMR[AT91C_ID_IRQ3] = 0x00;	//irq3 Low-level Sensitive interrupt, level 0
+    AT91_SYS->AIC_ICCR  = 1<<AT91C_ID_IRQ3;         //ack irq3
+
+	if(request_irq(AT91C_ID_IRQ3, miso_interrupt, 0, "at91Rm9200 interrupt MISO", NULL))
 	{
-		printk("request_irq at91_interrupt_PIOB error!\n");
-	} else printk("request_irq at91_interrupt_PIOB ok!\n");
-	at91_sys_write(AT91_AIC_SMR(AT91_ID_PIOB), 0x23 );
-//        设置相应的中断控制寄存器：PIOC_IER
-	at91_sys_write(pio+PIO_IER,AT91_PIN_PB10);
-//        Enable Peripheral clock in PMC for        PIOB
-	at91_sys_write(AT91_PMC_PCER, 1 <<AT91_ID_PIOB );
-//enable PIOB interrupt
-	at91_sys_write(AT91_AIC_IECR, 1 << AT91_ID_PIOB);
+		printk("request_irq at91_interrupt_MISO error!\n");
+	} else printk("request_irq at91_interrupt_MISO ok!\n");
+
 /******************************************************************************/
 
 	return 0;
