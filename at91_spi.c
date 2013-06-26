@@ -228,7 +228,13 @@ static irqreturn_t spi_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 /* ......................................................................... */
 
 /******************************************************************************/
-
+/*
+ * Handle interrupt from MISO
+ **/
+static irqreturn_t miso_interrupt(int irq, void *dev_id, struct pt_regs *regs){
+	printk(KERN_INFO "[DEBUG INFO] : SPI Interrupt for MISO is detected.\n");
+	return IRQ_HANDLED;
+}
 
 /******************************************************************************/
 
@@ -267,7 +273,17 @@ static int __init at91_spi_init(void)
 	}
 	controller->SPI_CR = AT91C_SPI_SPIEN;		/* Enable SPI */
 /******************************************************************************/
+	AT91_SYS->PIOA_PDR = AT91C_PIO_PA23;		//disable PA23 IO mode
+    AT91_SYS->PIOA_BSR = AT91C_PIO_PA23;		//set peripheral B function, irq3
 
+    AT91_SYS->PMC_PCER  = 1<<AT91C_ID_IRQ3;		//enable irq3 clock
+    AT91_SYS->AIC_SMR[AT91C_ID_IRQ3] = 0x00;	//irq3 Low-level Sensitive interrupt, level 0
+    AT91_SYS->AIC_ICCR  = 1<<AT91C_ID_IRQ3;         //ack irq3
+
+	if(request_irq(AT91C_ID_IRQ3, miso_interrupt, 0, "at91Rm9200 interrupt MISO", NULL))
+	{
+		printk("request_irq at91_interrupt_MISO error!\n");
+	} else printk("request_irq at91_interrupt_MISO ok!\n");
 
 /******************************************************************************/
 
@@ -279,7 +295,6 @@ static void __exit at91_spi_exit(void)
 	controller->SPI_CR = AT91C_SPI_SPIDIS;		/* Disable SPI */
 
 	free_irq(AT91C_ID_SPI, 0);
-	free_irq(AT91C_ID_IRQ3, 0);
 }
 
 

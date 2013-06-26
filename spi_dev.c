@@ -6,15 +6,9 @@
 #include <linux/pagemap.h>
 #include <asm/arch/at91_spi.h>
 
-#include <asm/arch/pio.h>
-#include <linux/interrupt.h>
-
 #ifdef CONFIG_DEVFS_FS
 #include <linux/devfs_fs_kernel.h>
 #endif
-
-int adc_wait_flag;
-DECLARE_WAIT_QUEUE_HEAD(adc_wait);  //declare a wait queue
 
 #define SPIDEV_DEBUG
 #undef SPIDEV_DEBUG
@@ -66,32 +60,9 @@ static int send_data(char* data, int len) {
 	return  0;
 }
 
-/******************************************************************************/
-
-
-/*
- * Handle interrupt from MISO
- **/
-static irqreturn_t miso_interrupt(int irq, void *dev_id, struct pt_regs *regs){
-	printk(KERN_INFO "[DEBUG INFO] : SPI Interrupt for MISO is detected.\n");
-
-	if (adc_wait_flag == 0){
-		adc_wait_flag = 1;
-		wake_up_interruptible(&adc_wait);
-	}
-
-	return IRQ_HANDLED;
-}
-/******************************************************************************/
-
-
 static ssize_t spidev_write(struct file * file, const char __user * userbuf, size_t count, loff_t * off)
 {
 	char buffer[100];
-	char delay_flag = 0;
-	if ((count == sizeof(char)) && ((*userbuf & 0x80) !=0))
-		delay_flag = 1;
-
 
 #ifdef SPIDEV_DEBUG
 	printk("[KERNEL INFO] : Enter Write Info.\n");
@@ -105,20 +76,8 @@ static ssize_t spidev_write(struct file * file, const char __user * userbuf, siz
 	 printk("[KERNEL INFO] : buff[%d] = 0x%x.\n",i,buffer[i]);
 	 }
 	 */
-
 	spi_access_bus(0);
-	if (delay_flag == 1){
-		enable_irq(AT91C_ID_IRQ3);
-		adc_wait_flag = 0;
-		wait_event_interruptible(adc_wait, adc_wait_flag);
-		adc_wait_flag = 0;
-		disable_irq(AT91C_ID_IRQ3);
-	}
-
 	send_data(buffer,count);
-
-
-
 	spi_release_bus(0);
 
 	return 0;
@@ -179,22 +138,6 @@ static int __init spi_dev_init(void)
 	}
 #endif	
 	printk(KERN_INFO "AT91 SPI driver loaded\n");
-
-	/******************************************************************************/
-
-	AT91_SYS->PIOA_PDR = AT91C_PIO_PA23;		//disable PA23 IO mode
-    AT91_SYS->PIOA_BSR = AT91C_PIO_PA23;		//set peripheral B function, irq3
-
-    AT91_SYS->PMC_PCER  = 1<<AT91C_ID_IRQ3;		//enable irq3 clock
-    AT91_SYS->AIC_SMR[AT91C_ID_IRQ3] = 0x00;	//irq3 Low-level Sensitive interrupt, level 0
-    AT91_SYS->AIC_ICCR  = 1<<AT91C_ID_IRQ3;         //ack irq3
-
-	if(request_irq(AT91C_ID_IRQ3, miso_interrupt, 0, "at91Rm9200 interrupt MISO", NULL))
-	{
-		printk("request_irq at91_interrupt_MISO error!\n");
-	} else printk("request_irq at91_interrupt_MISO ok!\n");
-	disable_irq(AT91C_ID_IRQ3);
-	/******************************************************************************/
 
 	return 0;
 }
