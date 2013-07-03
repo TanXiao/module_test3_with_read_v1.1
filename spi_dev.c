@@ -7,6 +7,7 @@
 #include <asm/arch/at91_spi.h>
 
 #include <asm/arch/pio.h>
+#include <asm/arch/gpio.h>
 #include <linux/interrupt.h>
 
 #ifdef CONFIG_DEVFS_FS
@@ -18,6 +19,11 @@ DECLARE_WAIT_QUEUE_HEAD(adc_wait);  //declare a wait queue
 
 #define SPIDEV_DEBUG
 #undef SPIDEV_DEBUG
+
+#define SPI_IRQ
+//#undef SPI_IRQ
+
+char delay_flag = 0;
 
 static int spidev_open(struct inode* inode, struct file *file) {
 #ifdef SPIDEV_DEBUG
@@ -67,87 +73,137 @@ static int send_data(char* data, int len) {
 }
 
 /******************************************************************************/
-
-
 /*
  * Handle interrupt from MISO
  **/
+#ifdef SPI_IRQ
 static irqreturn_t miso_interrupt(int irq, void *dev_id, struct pt_regs *regs){
-	printk(KERN_INFO "[DEBUG INFO] : SPI Interrupt for MISO is detected.\n");
+
+	AT91_SYS->AIC_IDCR  = 1<<AT91C_ID_IRQ3;
+//	printk(KERN_INFO "[DEBUG INFO] : SPI Interrupt for MISO is detected.\n");
 
 	if (adc_wait_flag == 0){
 		adc_wait_flag = 1;
+//		printk(KERN_INFO "[DEBUG INFO] : waiting queue is waken up.\n");
 		wake_up_interruptible(&adc_wait);
 	}
 
 	return IRQ_HANDLED;
 }
+#endif /*  SPI_IRQ */
 /******************************************************************************/
 
+static void wait_convert(void)
+{
+//	printk("[KERNEL INFO WRITE] : Waiting for cs5532 to complete.\n");
+	int sdo = at91_get_gpio_value(AT91_PIN_PA23);
+//	printk("[KERNEL INFO] : wait_convert entered.SDO = %x.\n", sdo);
+//	printk("[KERNEL INFO WRITE] : Waiting for cs5532 to complete.\n");
+	if (sdo ==0)
+		return;
+#ifdef SPI_IRQ
+	adc_wait_flag = 0;
+//	printk("[KERNEL INFO] : Put into waiting queue.\n");
 
+ 	AT91_SYS->AIC_ICCR  = 1<<AT91C_ID_IRQ3;     //ack irq3
+	enable_irq(AT91C_ID_IRQ3);
+	wait_event_interruptible(adc_wait, adc_wait_flag);
+	disable_irq(AT91C_ID_IRQ3);
+	sdo = at91_get_gpio_value(AT91_PIN_PA23);
+//	printk("[KERNEL INFO] : SDO = %x.\n", sdo);
+//	printk("[KERNEL INFO] : Back from waiting queue.\n");
+	adc_wait_flag = 0;
+#else
+	sdo = at91_get_gpio_value(AT91_PIN_PA23);
+	while (sdo == 1){
+		sdo = at91_get_gpio_value(AT91_PIN_PA23);
+		printk("[KERNEL INFO] : SDO = %x.\n", sdo);
+	}
+	printk("[KERNEL INFO] : SDO = %x.\n", sdo);
+#endif /* SPI_IRQ */
+
+}
+
+/******************************************************************************/
 static ssize_t spidev_write(struct file * file, const char __user * userbuf, size_t count, loff_t * off)
 {
 	char buffer[100];
-	char delay_flag = 0;
-	if ((count == sizeof(char)) && ((*userbuf & 0x80) !=0))
-		delay_flag = 1;
-
-
+	
 #ifdef SPIDEV_DEBUG
 	printk("[KERNEL INFO] : Enter Write Info.\n");
 #endif /* SPIDEV_DEBUG */
 
+	if (count == 16)
+		delay_flag = 0;
+
 	if (copy_from_user(buffer, userbuf, count))
 	return -EFAULT;
-	/*
-	 printk("[KERNLE INFO] : len = %d.\n", len);
-	 for(i=0;i<len;i++){
-	 printk("[KERNEL INFO] : buff[%d] = 0x%x.\n",i,buffer[i]);
-	 }
-	 */
 
 	spi_access_bus(0);
-	if (delay_flag == 1){
-		enable_irq(AT91C_ID_IRQ3);
-		adc_wait_flag = 0;
-		wait_event_interruptible(adc_wait, adc_wait_flag);
-		adc_wait_flag = 0;
-		disable_irq(AT91C_ID_IRQ3);
+
+	if ((delay_flag != 0)&&(count == sizeof(char))){
+//		printk("[KERNEL INFO] : [W]Put to SPI: %x\n", *userbuf);
+		if (delay_flag == 2 && ((*userbuf ) == 0xff)){
+			printk("[KERNEL INFO] : conversion stopped.\n");
+			delay_flag = 0;
+		}else{
+			wait_convert();
+//			printk("[KERNEL INFO] : Back from wait_convert.\n");
+//			printk("[KERNEL INFO] : delay_flag = %d.\n",delay_flag);
+			if (delay_flag == 1){
+				delay_flag = 0;
+//				printk("[KERNEL INFO] : delay_flag = 0.\n");
+			}
+		}
 	}
 
 	send_data(buffer,count);
-
-
-
 	spi_release_bus(0);
 
+	if (count == sizeof(char)) {
+		if (((*userbuf & 0x80) != 0) && ((*userbuf & 0x40) ==0)){
+		//printk("[KERNEL INFO] : [1]Put to SPI: %x\n", *userbuf);
+		delay_flag = 1;
+		}else if ((*userbuf & 0xc0) == 0xc0){
+		//printk("[KERNEL INFO] : [2]Put to SPI: %x\n", *userbuf);
+		delay_flag = 2;
+		}
+	}
 	return 0;
 }
 
 /******************************************************************************/
 static ssize_t spidev_read(struct file * file,  char __user * userbuf, size_t count, loff_t * off)
 {
-
 	char buffer[100];
 	memset(buffer,0, 100);
-
 	spi_access_bus(0);
+
+	if ((delay_flag != 0)&&(count == sizeof(char))){
+//		printk("[KERNEL INFO] : [R]Put to SPI: %x\n", *userbuf);
+		if (delay_flag == 2 && ((*userbuf ) == 0xff)){
+			printk("[KERNEL INFO] : conversion stopped.\n");
+			delay_flag = 0;
+		}else{
+			wait_convert();
+			if (delay_flag == 1){
+				delay_flag = 0;
+			}
+		}
+	}
+
 	send_data(buffer, count);
 	spi_release_bus(0);
+
 #ifdef SPIDEV_DEBUG
 	int i;
 	for (i = 0; i < len; i++)
 		printk("[KERNEL INFO] : Enter Read Info.%x\n", buffer[i]);
 #endif /* SPIDEV_DEBUG */
 
-
 	if (copy_to_user(userbuf, buffer, count))
 		return -EFAULT;
 
-
-#ifdef SPIDEV_DEBUG
-	printk("[KERNEL INFO] : copy_to_user finished.\n");
-#endif /* SPIDEV_DEBUG */
 	return 0;
 }
 
@@ -181,19 +237,25 @@ static int __init spi_dev_init(void)
 	printk(KERN_INFO "AT91 SPI driver loaded\n");
 
 	/******************************************************************************/
+#ifdef SPI_IRQ
 
-	AT91_SYS->PIOA_PDR = AT91C_PIO_PA23;		//disable PA23 IO mode
-    AT91_SYS->PIOA_BSR = AT91C_PIO_PA23;		//set peripheral B function, irq3
+	AT91_SYS->PMC_PCER  = 1<<AT91C_ID_IRQ3;		//enable irq3 clock
+	at91_set_B_periph(AT91_PIN_PA23,1);
 
-    AT91_SYS->PMC_PCER  = 1<<AT91C_ID_IRQ3;		//enable irq3 clock
-    AT91_SYS->AIC_SMR[AT91C_ID_IRQ3] = 0x00;	//irq3 Low-level Sensitive interrupt, level 0
-    AT91_SYS->AIC_ICCR  = 1<<AT91C_ID_IRQ3;         //ack irq3
+   	AT91_SYS->AIC_SMR[AT91C_ID_IRQ3] = 0x20;	//irq3 Low-level Sensitive interrupt, level 0
+    AT91_SYS->AIC_ICCR  = 1<<AT91C_ID_IRQ3;     //ack irq3
+// 	AT91_SYS->AIC_IECR  = 1<<AT91C_ID_IRQ3;     //enable irq3
 
 	if(request_irq(AT91C_ID_IRQ3, miso_interrupt, 0, "at91Rm9200 interrupt MISO", NULL))
 	{
 		printk("request_irq at91_interrupt_MISO error!\n");
 	} else printk("request_irq at91_interrupt_MISO ok!\n");
+
 	disable_irq(AT91C_ID_IRQ3);
+
+#else
+	at91_set_gpio_input(AT91_PIN_PA23, 1);
+#endif /* SPI_IRQ */
 	/******************************************************************************/
 
 	return 0;
@@ -214,6 +276,10 @@ static void __exit spi_dev_exit(void)
 		printk(KERN_ERR "at91_spidev: Unable to release major %d for SPI bus\n", SPI_MAJOR);
 		return;
 	}
+#ifdef SPI_IRQ
+	free_irq(AT91C_ID_IRQ3, 0);
+#endif /* SPI_IRQ */
+
 }
 
 module_init( spi_dev_init);

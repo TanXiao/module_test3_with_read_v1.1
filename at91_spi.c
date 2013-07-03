@@ -20,6 +20,7 @@
 #include <asm/arch/AT91RM9200_SPI.h>
 #include <asm/arch/board.h>
 #include <asm/arch/pio.h>
+#include <asm/arch/gpio.h>
 #include <asm/arch/at91_spi.h>
 
 #define DEBUG_SPI 0
@@ -77,7 +78,7 @@ void spi_access_bus(short device)
 
 	/* Configure SPI bus for device */
 	controller->SPI_MR = AT91C_SPI_MSTR | AT91C_SPI_MODFDIS | (spi_dev[device].pcs << 16);
-
+	at91_set_gpio_value(AT91_PIN_PA24, 0);
 }
 
 /*
@@ -85,6 +86,8 @@ void spi_access_bus(short device)
  */
 void spi_release_bus(short device)
 {
+	at91_set_gpio_value(AT91_PIN_PA24, 1);
+
 	if (device != current_device)
 		panic("at91_spi: spi_release called with invalid device");
 
@@ -100,6 +103,7 @@ void spi_release_bus(short device)
 		printk(KERN_INFO "[DEBUG INFO] : SPI off\n");
 #endif
 	}
+//	at91_set_gpio_value(AT91_PIN_PA24, 1);
 }
 
 /*
@@ -157,11 +161,14 @@ int spi_transfer(struct spi_transfer_list* list)
 	//   in the interrupt handler.
 
 	/* Enable transmitter and receiver */
+	at91_set_gpio_value(AT91_PIN_PA24, 0);
+
 	controller->SPI_PTCR = AT91C_PDC_RXTEN | AT91C_PDC_TXTEN;
 
 	controller->SPI_IER = AT91C_SPI_SPENDRX;	/* enable buffer complete interrupt */
 	wait_for_completion(&transfer_complete);
 
+//	at91_set_gpio_value(AT91_PIN_PA24, 1);
 #ifdef DEBUG_SPI
 	printk("[DEBUG INFO] : SPI ");
 	printk(KERN_INFO "[DEBUG INFO] : SPI transfer end\n");
@@ -247,7 +254,7 @@ static int __init at91_spi_init(void)
 
 	/* Set Chip Select registers to good defaults */
 //	controller->SPI_CSR0 = AT91C_SPI_CPOL |AT91C_SPI_NCPHA | AT91C_SPI_BITS_8 | (1 << 16) | (15 << 8);
-	controller->SPI_CSR0 = AT91C_SPI_BITS_8 | (1 << 16) | (60 << 8);
+	controller->SPI_CSR0 = AT91C_SPI_BITS_8 | (16 << 16) | (15 << 8);
 	controller->SPI_CSR1 = AT91C_SPI_CPOL | AT91C_SPI_BITS_8 | (16 << 16) | (DEFAULT_SPI_BAUD << 8);
 	controller->SPI_CSR2 = AT91C_SPI_CPOL | AT91C_SPI_BITS_8 | (16 << 16) | (DEFAULT_SPI_BAUD << 8);
 	controller->SPI_CSR3 = AT91C_SPI_CPOL | AT91C_SPI_BITS_8 | (16 << 16) | (DEFAULT_SPI_BAUD << 8);
@@ -269,6 +276,8 @@ static int __init at91_spi_init(void)
 /******************************************************************************/
 
 
+	at91_set_gpio_output(AT91_PIN_PA24, 1);
+	at91_set_gpio_value(AT91_PIN_PA24, 1);
 /******************************************************************************/
 
 	return 0;
@@ -279,7 +288,6 @@ static void __exit at91_spi_exit(void)
 	controller->SPI_CR = AT91C_SPI_SPIDIS;		/* Disable SPI */
 
 	free_irq(AT91C_ID_SPI, 0);
-	free_irq(AT91C_ID_IRQ3, 0);
 }
 
 
